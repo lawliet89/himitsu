@@ -1,0 +1,23 @@
+[package]
+name = "himitsu"
+version = "0.1.0"
+authors = ["Yong Wen Chua <me@yongwen.xyz>"]
+
+[[bin]]
+name = "himitsu"
+path = "src/main.rs"
+test = true
+doc = false
+
+[dependencies]
+clap = "2.26.2"
+libhimitsu = { path = "./libhimitsu"}
+rand = "0.3.17"
+rpassword = "1.0.0"
+serde = "1.0"
+serde_json = "1.0"
+serde_yaml = "0.7.1"
+toml = "0.4.5"
+
+[workspace]
+members = ["libhimitsu"]

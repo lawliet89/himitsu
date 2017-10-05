@@ -1,0 +1,19 @@
+[package]
+name = "libhimitsu"
+version = "0.1.0"
+authors = ["Yong Wen Chua <me@yongwen.xyz>"]
+
+[lib]
+name = "libhimitsu"
+path = "src/lib.rs"
+test = true
+doctest = true
+doc = true
+
+[dependencies]
+argon2rs = "0.2.5"
+ring = "0.12.1"
+rmp-serde = "0.13.7"
+strfmt = "0.1.5"
+serde = "1.0"
+serde_derive = "1.0"
