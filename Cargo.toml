@@ -1,0 +1,16 @@
+[package]
+name = "himitsu"
+version = "0.1.0"
+authors = ["Yong Wen Chua <me@yongwen.xyz>"]
+
+[[bin]]
+name = "himitsu"
+path = "src/main.rs"
+test = true
+doc = false
+
+[dependencies]
+libhimitsu = { path = "./libhimitsu"}
+
+[workspace]
+members = ["libhimitsu"]
