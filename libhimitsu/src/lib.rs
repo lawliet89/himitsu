@@ -186,7 +186,7 @@ impl<'a> EncryptedVault<'a> {
 
 
 impl Himitsu {
-    // /// Apply the template string with the secrets
+    /// Apply the template string with the secrets
     pub fn apply(&self) -> Result<String, Error> {
         Ok(strfmt::strfmt(&self.template, &self.secrets)?)
     }

@@ -1,0 +1,22 @@
+[[himitsu]]
+name = 'foobar'
+template = '{a} {b} {c}'
+
+[himitsu.secrets]
+a = 'foo'
+c = 'baz'
+b = 'bar'
+
+[[himitsu]]
+name = 'nuke'
+template = 'nuke estab --password {password}'
+
+[himitsu.secrets]
+password = 'p@ssw0rd'
+
+[[himitsu]]
+name = 'cat'
+template = 'cat {path}'
+
+[himitsu.secrets]
+path = '/etc/hosts'
