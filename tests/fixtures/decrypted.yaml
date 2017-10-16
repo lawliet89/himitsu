@@ -1,0 +1,20 @@
+Enter the password to decrypt the vault with:
+---
+himitsu:
+  -
+    name: foobar
+    template: "{a} {b} {c}"
+    secrets:
+      a: foo
+      c: baz
+      b: bar
+  -
+    name: nuke
+    template: "nuke estab --password {password}"
+    secrets:
+      password: "p@ssw0rd"
+  -
+    name: cat
+    template: "cat {path}"
+    secrets:
+      path: /etc/hosts

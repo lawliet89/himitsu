@@ -1,0 +1,27 @@
+{
+    "himitsu": [
+        {
+            "name": "foobar",
+            "template": "{a} {b} {c}",
+            "secrets": {
+                "b": "bar",
+                "a": "foo",
+                "c": "baz"
+            }
+        },
+        {
+            "name": "nuke",
+            "template": "nuke estab --password {password}",
+            "secrets": {
+                "password": "p@ssw0rd"
+            }
+        },
+        {
+            "name": "cat",
+            "template": "cat {path}",
+            "secrets": {
+                "path": "/etc/hosts"
+            }
+        }
+    ]
+}

@@ -82,6 +82,8 @@ impl_from_error!(ring::error::Unspecified, Error::CryptographicError);
 pub struct Vault {
     /// The secrets for a particular vault
     pub himitsu: Vec<Himitsu>,
+
+    // TODO: Move nonce here? Ask the user not to touch the nonce field
 }
 
 /// The encrypted vault version. Defined as a struct for ease of serialization and deserialization
@@ -102,10 +104,11 @@ struct EncryptedVault<'a> {
 pub struct Himitsu {
     /// Name of the secret for user identification
     pub name: String,
-    /// Hash map of Secrets with their associated key
-    pub secrets: HashMap<String, String>,
     /// The template where the secrets will be templated into
     pub template: String,
+    /// Hash map of Secrets with their associated key
+    // Note: This HashMap _must be_ the last: See https://github.com/alexcrichton/toml-rs/issues/142
+    pub secrets: HashMap<String, String>,
 }
 
 impl Vault {
@@ -144,7 +147,7 @@ impl<'a> EncryptedVault<'a> {
         let key = Self::derive_key(password, salt);
         let sealing_key = aead::SealingKey::new(&aead::CHACHA20_POLY1305, &key)?;
 
-        let mut payload = rmps::to_vec(vault)?;
+        let mut payload = rmps::to_vec_named(vault)?;
         payload.append(&mut vec![0; TAG_LENGTH]);
 
         let size = aead::seal_in_place(&sealing_key, nonce, &[], &mut payload, TAG_LENGTH)?;
@@ -172,7 +175,7 @@ impl<'a> EncryptedVault<'a> {
 
     /// Pack the encrypted vault into a binary format
     pub fn pack(&self) -> Result<Vec<u8>, Error> {
-        Ok(rmps::to_vec(self)?)
+        Ok(rmps::to_vec_named(self)?)
     }
 
     /// Unpack a given slice into the encrypted form
