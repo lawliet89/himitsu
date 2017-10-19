@@ -88,7 +88,7 @@ pub struct Vault {
 
 /// The encrypted vault version. Defined as a struct for ease of serialization and deserialization
 #[derive(Serialize, Deserialize, Debug)]
-struct EncryptedVault<'a> {
+pub struct EncryptedVault<'a> {
     /// The encrypted vault payload
     pub payload: Cow<'a, [u8]>,
     /// The AEAD tag from the encryption

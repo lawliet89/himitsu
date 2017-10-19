@@ -63,8 +63,10 @@ fn run_subcommand(args: &ArgMatches) -> Result<(), String> {
 }
 
 fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
-    let input = args.value_of("input").or_else(|| Some("-"));
-    let output = args.value_of("output").or_else(|| Some("-"));
+    let input = args.value_of("input")
+        .expect("Required argument is provided");
+    let output = args.value_of("output")
+        .expect("Required argument is provided");
 
     let nonce = args.value_of("nonce");
     let salt = args.value_of("salt");
@@ -74,7 +76,7 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
 
     if dash_count(
         [
-            input.as_ref(),
+            Some(&input),
             nonce.as_ref(),
             salt.as_ref(),
             password.as_ref(),
@@ -86,7 +88,7 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
 
     let encrypted = {
         // Read and deserialize the vault.
-        let input = input_reader(input.unwrap())?;
+        let input = input_reader(input)?;
         let nonce = match nonce {
             Some(path) => Some(input_reader(path)?),
             None => None,
@@ -123,21 +125,23 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
 
     // Write
     {
-        let mut output = output_writer(output.unwrap())?; // safe to unwrap
+        let mut output = output_writer(output)?; // safe to unwrap
         let _ = output.write_all(&encrypted).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
 
 fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
-    let input = args.value_of("input").or_else(|| Some("-"));
-    let output = args.value_of("output").or_else(|| Some("-"));
+    let input = args.value_of("input")
+        .expect("Required argument is provided");
+    let output = args.value_of("output")
+        .expect("Required argument is provided");
 
     let password = args.value_of("password");
 
     let format = value_t!(args, "format", Format).map_err(|e| e.to_string())?;
 
-    if dash_count([input.as_ref(), password.as_ref()].into_iter()) > 1 {
+    if dash_count([Some(&input), password.as_ref()].into_iter()) > 1 {
         Err("Only one input source can be from STDIN")?
     }
 
@@ -151,7 +155,7 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
             .map_err(|e| e.to_string())?,
     };
 
-    let input = input_reader(input.unwrap())?; // safe to unwrap
+    let input = input_reader(input)?; // safe to unwrap
 
     // Read and decrypt the vault. Drop the handler so that we can write back to the same file
     let vault = decrypt(input, password.as_bytes())?;
@@ -161,7 +165,7 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
 
     // Write
     {
-        let mut output = output_writer(output.unwrap())?; // safe to unwrap
+        let mut output = output_writer(output)?; // safe to unwrap
         let _ = output
             .write_all(serialized.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -183,11 +187,7 @@ where
     R3: Read,
 {
     // Read and deserialize the vault. Drop the handler so that we can write back to the same file
-    let vault: Vault = match format {
-        Format::Toml => toml::from_slice(&read_to_vec(input)?).map_err(|e| e.to_string())?,
-        Format::Json => serde_json::from_reader(input).map_err(|e| e.to_string())?,
-        Format::Yaml => serde_yaml::from_reader(input).map_err(|e| e.to_string())?,
-    };
+    let vault = deserialize_vault(input, format)?;
     let nonce = read_or_rng(nonce, libhimitsu::NONCE_LENGTH)?;
     let salt = read_or_rng(salt, 32)?;
     // Perform the encryption
@@ -220,6 +220,7 @@ where
                      provide a path to a file containing the nonce. Use - to refer to STDIN",
                 )
                 .takes_value(true)
+                .empty_values(false)
                 .value_name("path"),
         )
         .arg(
@@ -230,6 +231,7 @@ where
                      provide a path to a file containing the salt. Use - to refer to STDIN",
                 )
                 .takes_value(true)
+                .empty_values(false)
                 .value_name("path"),
         )
         .arg(
@@ -241,6 +243,7 @@ where
                 .short("p")
                 .long("password")
                 .takes_value(true)
+                .empty_values(false)
                 .value_name("path"),
         )
         .arg(
@@ -251,6 +254,7 @@ where
                 .short("f")
                 .long("format")
                 .takes_value(true)
+                .empty_values(false)
                 .value_name("format")
                 .global(true),
         )
@@ -259,20 +263,24 @@ where
                 .index(1)
                 .help(
                     "Specifies the path to read the decrypted vault from. \
-                     Defaults to STDIN. Use - to refer to STDIN",
+                     Use - to refer to STDIN",
                 )
                 .takes_value(true)
-                .value_name("path"),
+                .value_name("input_path")
+                .empty_values(false)
+                .required(true),
         )
         .arg(
             Arg::with_name("output")
                 .index(2)
                 .help(
                     "Specifies the path to write the encrypted vault to. \
-                     Defaults to STDOUT. Use - to refer to STDOUT",
+                     Use - to refer to STDOUT",
                 )
                 .takes_value(true)
-                .value_name("path"),
+                .value_name("output_path")
+                .empty_values(false)
+                .required(true),
         );
 
     let decrypt = SubCommand::with_name("decrypt")
@@ -286,6 +294,7 @@ where
                 .short("p")
                 .long("password")
                 .takes_value(true)
+                .empty_values(false)
                 .value_name("path"),
         )
         .arg(
@@ -297,6 +306,7 @@ where
                 .long("format")
                 .takes_value(true)
                 .value_name("format")
+                .empty_values(false)
                 .global(true),
         )
         .arg(
@@ -304,20 +314,24 @@ where
                 .index(1)
                 .help(
                     "Specifies the path to read the encrypted vault from. \
-                     Defaults to STDIN. Use - to refer to STDIN",
+                     Use - to refer to STDIN",
                 )
                 .takes_value(true)
-                .value_name("path"),
+                .value_name("input_path")
+                .empty_values(false)
+                .required(true),
         )
         .arg(
             Arg::with_name("output")
                 .index(2)
                 .help(
                     "Specifies the path to write the decrypted vault to. \
-                     Defaults to STDOUT. Use - to refer to STDOUT",
+                     Use - to refer to STDOUT",
                 )
                 .takes_value(true)
-                .value_name("path"),
+                .value_name("output_path")
+                .empty_values(false)
+                .required(true),
         );
 
     App::new(crate_name!())
@@ -391,6 +405,17 @@ fn serialize_vault(vault: &Vault, format: Format) -> Result<String, String> {
     })
 }
 
+/// Deserialize a vault from a Reader
+fn deserialize_vault<R: Read>(reader: R, format: Format) -> Result<Vault, String> {
+    let vault: Vault = match format {
+        Format::Toml => toml::from_slice(&read_to_vec(reader)?).map_err(|e| e.to_string())?,
+        Format::Json => serde_json::from_reader(reader).map_err(|e| e.to_string())?,
+        Format::Yaml => serde_yaml::from_reader(reader).map_err(|e| e.to_string())?,
+    };
+    Ok(vault)
+}
+
+
 /// Counts the number of "dashes" or `-` in an Iterator of Options<S>
 fn dash_count<'a, S, I>(iterator: I) -> usize
 where
@@ -415,11 +440,12 @@ fn is_dash(s: &str) -> bool {
 mod tests {
     use super::*;
 
-    use std::io::Cursor;
+    use std::io::{Cursor, Seek};
     use std::ops::Fn;
 
     use toml;
-    use libhimitsu::{self, Vault};
+    use libhimitsu::{self, EncryptedVault, Vault};
+    use tempfile::NamedTempFile;
 
     static PASSWORD: &str = "password";
 
@@ -451,16 +477,16 @@ mod tests {
         include_str!("../tests/fixtures/decrypted.json")
     }
 
-    fn encrypted_fixture() -> &'static [u8] {
-        include_bytes!("../tests/fixtures/encrypted.bin")
-    }
-
     fn to_cursor<F, T>(fixture: F) -> Cursor<T>
     where
         F: Fn() -> T,
         T: AsRef<[u8]>,
     {
         Cursor::new(fixture())
+    }
+
+    fn temp() -> NamedTempFile {
+        NamedTempFile::new().expect("To create a temporary file")
     }
 
     #[test]
@@ -530,5 +556,271 @@ mod tests {
         let decrypted = decrypt(Cursor::new(encrypted), PASSWORD.as_bytes()).expect("to not fail");
 
         assert_eq!(expected, decrypted);
+    }
+
+    #[test]
+    fn encrypt_uses_provided_salt_and_nonce() {
+        let encrypted = encrypt(
+            PASSWORD.as_bytes(),
+            Format::Toml,
+            to_cursor(toml_fixture),
+            Some(to_cursor(zero_nonce)),
+            Some(to_cursor(zero_salt)),
+        ).expect("to not fail");
+
+        let unpacked = EncryptedVault::unpack(&encrypted).expect("to succeed");
+
+        assert!(unpacked.salt.iter().all(|byte| *byte == 0u8));
+        assert!(unpacked.nonce.iter().all(|byte| *byte == 0u8));
+    }
+
+    #[test]
+    #[should_panic(expected = "Only one input source can be from STDIN")]
+    /// Only one input from STDIN is allowed
+    fn encrypt_stdin_validated_correctly() {
+        let parser = make_parser();
+        let args = vec!["himitsu", "encrypt", "--nonce=-", "--password=-", "-", "-"];
+        let matches = parser
+            .get_matches_from_safe(args)
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("encrypt")
+            .expect("to be encrypt subcommand");
+        run_encrypt(&subcommand).unwrap();
+    }
+
+    #[test]
+    #[should_panic(expected = "Only one input source can be from STDIN")]
+    /// Only one input from STDIN is allowed
+    fn decrypt_stdin_validated_correctly() {
+        let parser = make_parser();
+        let args = vec!["himitsu", "decrypt", "--password=-", "-", "-"];
+        let matches = parser
+            .get_matches_from_safe(args)
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("decrypt")
+            .expect("to be decrypt subcommand");
+        run_decrypt(&subcommand).unwrap();
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_toml() {
+        let mut decrypted = temp();
+        let encrypted = temp();
+        let mut password = temp();
+        decrypted
+            .write_all(toml_fixture().as_bytes())
+            .expect("to be successful");
+        password
+            .write_all(PASSWORD.as_bytes())
+            .expect("to be successful");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "encrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=toml",
+                decrypted.path().to_str().expect("to exist"),
+                encrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("encrypt")
+            .expect("to be encrypt subcommand");
+
+        run_encrypt(&subcommand).expect("to succeed");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "decrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=toml",
+                encrypted.path().to_str().expect("to exist"),
+                decrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("decrypt")
+            .expect("to be decrypt subcommand");
+        run_decrypt(&subcommand).expect("to succeed");
+
+        let expected = fixture();
+        decrypted
+            .seek(std::io::SeekFrom::Start(0))
+            .expect("to succeed");
+        let actual =
+            deserialize_vault(&mut decrypted, Format::Toml).expect("to deserialize correctly");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_json() {
+        let mut decrypted = temp();
+        let encrypted = temp();
+        let mut password = temp();
+        decrypted
+            .write_all(json_fixture().as_bytes())
+            .expect("to be successful");
+        password
+            .write_all(PASSWORD.as_bytes())
+            .expect("to be successful");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "encrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=json",
+                decrypted.path().to_str().expect("to exist"),
+                encrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("encrypt")
+            .expect("to be encrypt subcommand");
+
+        run_encrypt(&subcommand).expect("to succeed");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "decrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=json",
+                encrypted.path().to_str().expect("to exist"),
+                decrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("decrypt")
+            .expect("to be decrypt subcommand");
+        run_decrypt(&subcommand).expect("to succeed");
+
+        let expected = fixture();
+        decrypted
+            .seek(std::io::SeekFrom::Start(0))
+            .expect("to succeed");
+        let actual =
+            deserialize_vault(&mut decrypted, Format::Json).expect("to deserialize correctly");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_yaml() {
+        let mut decrypted = temp();
+        let encrypted = temp();
+        let mut password = temp();
+        decrypted
+            .write_all(yaml_fixture().as_bytes())
+            .expect("to be successful");
+        password
+            .write_all(PASSWORD.as_bytes())
+            .expect("to be successful");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "encrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=yaml",
+                decrypted.path().to_str().expect("to exist"),
+                encrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("encrypt")
+            .expect("to be encrypt subcommand");
+
+        run_encrypt(&subcommand).expect("to succeed");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "decrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=yaml",
+                encrypted.path().to_str().expect("to exist"),
+                decrypted.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("decrypt")
+            .expect("to be decrypt subcommand");
+        run_decrypt(&subcommand).expect("to succeed");
+
+        let expected = fixture();
+        decrypted
+            .seek(std::io::SeekFrom::Start(0))
+            .expect("to succeed");
+        let actual =
+            deserialize_vault(&mut decrypted, Format::Yaml).expect("to deserialize correctly");
+        assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn encrypt_decrypt_roundtrip_same_file() {
+        let mut file = temp();
+        let mut password = temp();
+        file.write_all(toml_fixture().as_bytes())
+            .expect("to be successful");
+        password
+            .write_all(PASSWORD.as_bytes())
+            .expect("to be successful");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "encrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=toml",
+                file.path().to_str().expect("to exist"),
+                file.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("encrypt")
+            .expect("to be encrypt subcommand");
+
+        run_encrypt(&subcommand).expect("to succeed");
+
+        let parser = make_parser();
+        let matches = parser
+            .get_matches_from_safe(vec![
+                "himitsu",
+                "decrypt",
+                "--password",
+                password.path().to_str().expect("to exist"),
+                "--format=toml",
+                file.path().to_str().expect("to exist"),
+                file.path().to_str().expect("to exist"),
+            ])
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("decrypt")
+            .expect("to be decrypt subcommand");
+        run_decrypt(&subcommand).expect("to succeed");
+
+        let expected = fixture();
+        file.seek(std::io::SeekFrom::Start(0)).expect("to succeed");
+        let actual =
+            deserialize_vault(&mut file, Format::Toml).expect("to deserialize correctly");
+        assert_eq!(actual, expected);
     }
 }
