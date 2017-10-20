@@ -478,7 +478,7 @@ mod tests {
     }
 
     #[cfg(target_family = "windows")]
-    mod unix {
+    mod windows {
         use super::*;
 
         #[test]

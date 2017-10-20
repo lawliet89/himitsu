@@ -9,7 +9,7 @@ extern crate serde_yaml;
 extern crate toml;
 
 #[cfg(test)]
-extern crate tempfile;
+extern crate tempdir;
 
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -486,12 +486,14 @@ fn is_dash(s: &str) -> bool {
 mod tests {
     use super::*;
 
+    use std::fs::File;
     use std::io::{Cursor, Seek};
     use std::ops::Fn;
+    use std::path::PathBuf;
 
     use toml;
     use libhimitsu::{self, EncryptedVault, Vault};
-    use tempfile::NamedTempFile;
+    use tempdir::TempDir;
 
     static PASSWORD: &str = "password";
 
@@ -535,8 +537,12 @@ mod tests {
         Cursor::new(fixture())
     }
 
-    fn temp() -> NamedTempFile {
-        NamedTempFile::new().expect("To create a temporary file")
+    fn tempdir() -> TempDir {
+        TempDir::new("himitsu").expect("To create a temporary directory")
+    }
+
+    fn tempfile(tempdir: &TempDir, name: &str) -> PathBuf {
+        tempdir.path().join(name)
     }
 
     #[test]
@@ -665,15 +671,21 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_toml() {
-        let mut decrypted = temp();
-        let encrypted = temp();
-        let mut password = temp();
-        decrypted
-            .write_all(toml_fixture().as_bytes())
-            .expect("to be successful");
-        password
-            .write_all(PASSWORD.as_bytes())
-            .expect("to be successful");
+        let directory = tempdir();
+        let decrypted_path = tempfile(&directory, "decrypted.toml");
+        let encrypted_path = tempfile(&directory, "encrypted.bin");
+        let password_path = tempfile(&directory, "password.txt");
+
+        {
+            let mut decrypted = File::create(&decrypted_path).expect("to create successfully");
+            let mut password = File::create(&password_path).expect("to create successfully");
+            decrypted
+                .write_all(toml_fixture().as_bytes())
+                .expect("to be successful");
+            password
+                .write_all(PASSWORD.as_bytes())
+                .expect("to be successful");
+        }
 
         let parser = make_parser();
         let matches = parser
@@ -681,10 +693,10 @@ mod tests {
                 "himitsu",
                 "encrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=toml",
-                decrypted.path().to_str().expect("to exist"),
-                encrypted.path().to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -699,10 +711,10 @@ mod tests {
                 "himitsu",
                 "decrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=toml",
-                encrypted.path().to_str().expect("to exist"),
-                decrypted.path().to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -711,6 +723,7 @@ mod tests {
         run_decrypt(&subcommand).expect("to succeed");
 
         let expected = fixture();
+        let mut decrypted = File::open(&decrypted_path).expect("to open decrypted file");
         decrypted
             .seek(std::io::SeekFrom::Start(0))
             .expect("to succeed");
@@ -721,15 +734,21 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_json() {
-        let mut decrypted = temp();
-        let encrypted = temp();
-        let mut password = temp();
-        decrypted
-            .write_all(json_fixture().as_bytes())
-            .expect("to be successful");
-        password
-            .write_all(PASSWORD.as_bytes())
-            .expect("to be successful");
+        let directory = tempdir();
+        let decrypted_path = tempfile(&directory, "decrypted.json");
+        let encrypted_path = tempfile(&directory, "encrypted.bin");
+        let password_path = tempfile(&directory, "password.txt");
+
+        {
+            let mut decrypted = File::create(&decrypted_path).expect("to create successfully");
+            let mut password = File::create(&password_path).expect("to create successfully");
+            decrypted
+                .write_all(json_fixture().as_bytes())
+                .expect("to be successful");
+            password
+                .write_all(PASSWORD.as_bytes())
+                .expect("to be successful");
+        }
 
         let parser = make_parser();
         let matches = parser
@@ -737,10 +756,10 @@ mod tests {
                 "himitsu",
                 "encrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=json",
-                decrypted.path().to_str().expect("to exist"),
-                encrypted.path().to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -755,10 +774,10 @@ mod tests {
                 "himitsu",
                 "decrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=json",
-                encrypted.path().to_str().expect("to exist"),
-                decrypted.path().to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -767,6 +786,7 @@ mod tests {
         run_decrypt(&subcommand).expect("to succeed");
 
         let expected = fixture();
+        let mut decrypted = File::open(&decrypted_path).expect("to open decrypted file");
         decrypted
             .seek(std::io::SeekFrom::Start(0))
             .expect("to succeed");
@@ -777,15 +797,21 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_yaml() {
-        let mut decrypted = temp();
-        let encrypted = temp();
-        let mut password = temp();
-        decrypted
-            .write_all(yaml_fixture().as_bytes())
-            .expect("to be successful");
-        password
-            .write_all(PASSWORD.as_bytes())
-            .expect("to be successful");
+        let directory = tempdir();
+        let decrypted_path = tempfile(&directory, "decrypted.yaml");
+        let encrypted_path = tempfile(&directory, "encrypted.bin");
+        let password_path = tempfile(&directory, "password.txt");
+
+        {
+            let mut decrypted = File::create(&decrypted_path).expect("to create successfully");
+            let mut password = File::create(&password_path).expect("to create successfully");
+            decrypted
+                .write_all(yaml_fixture().as_bytes())
+                .expect("to be successful");
+            password
+                .write_all(PASSWORD.as_bytes())
+                .expect("to be successful");
+        }
 
         let parser = make_parser();
         let matches = parser
@@ -793,10 +819,10 @@ mod tests {
                 "himitsu",
                 "encrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=yaml",
-                decrypted.path().to_str().expect("to exist"),
-                encrypted.path().to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -811,10 +837,10 @@ mod tests {
                 "himitsu",
                 "decrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=yaml",
-                encrypted.path().to_str().expect("to exist"),
-                decrypted.path().to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -823,6 +849,7 @@ mod tests {
         run_decrypt(&subcommand).expect("to succeed");
 
         let expected = fixture();
+        let mut decrypted = File::open(&decrypted_path).expect("to open decrypted file");
         decrypted
             .seek(std::io::SeekFrom::Start(0))
             .expect("to succeed");
@@ -833,13 +860,21 @@ mod tests {
 
     #[test]
     fn encrypt_decrypt_roundtrip_same_file() {
-        let mut file = temp();
-        let mut password = temp();
-        file.write_all(toml_fixture().as_bytes())
-            .expect("to be successful");
-        password
-            .write_all(PASSWORD.as_bytes())
-            .expect("to be successful");
+        let directory = tempdir();
+        let decrypted_path = tempfile(&directory, "vault");
+        let encrypted_path = tempfile(&directory, "vault");
+        let password_path = tempfile(&directory, "password.txt");
+
+        {
+            let mut decrypted = File::create(&decrypted_path).expect("to create successfully");
+            let mut password = File::create(&password_path).expect("to create successfully");
+            decrypted
+                .write_all(toml_fixture().as_bytes())
+                .expect("to be successful");
+            password
+                .write_all(PASSWORD.as_bytes())
+                .expect("to be successful");
+        }
 
         let parser = make_parser();
         let matches = parser
@@ -847,10 +882,10 @@ mod tests {
                 "himitsu",
                 "encrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=toml",
-                file.path().to_str().expect("to exist"),
-                file.path().to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -865,10 +900,10 @@ mod tests {
                 "himitsu",
                 "decrypt",
                 "--password",
-                password.path().to_str().expect("to exist"),
+                password_path.to_str().expect("to exist"),
                 "--format=toml",
-                file.path().to_str().expect("to exist"),
-                file.path().to_str().expect("to exist"),
+                encrypted_path.to_str().expect("to exist"),
+                decrypted_path.to_str().expect("to exist"),
             ])
             .expect("parsing to succeed");
         let subcommand = matches
@@ -877,8 +912,12 @@ mod tests {
         run_decrypt(&subcommand).expect("to succeed");
 
         let expected = fixture();
-        file.seek(std::io::SeekFrom::Start(0)).expect("to succeed");
-        let actual = deserialize_vault(&mut file, Format::Toml).expect("to deserialize correctly");
+        let mut decrypted = File::open(&decrypted_path).expect("to open decrypted file");
+        decrypted
+            .seek(std::io::SeekFrom::Start(0))
+            .expect("to succeed");
+        let actual =
+            deserialize_vault(&mut decrypted, Format::Toml).expect("to deserialize correctly");
         assert_eq!(actual, expected);
     }
 }

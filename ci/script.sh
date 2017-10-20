@@ -11,8 +11,7 @@ main() {
         return
     fi
 
-    cross test --target $TARGET --all
-    cross test --target $TARGET --all --release
+    cross test --target $TARGET --all --no-fail-fast
 }
 
 # we don't run the "test phase" when doing deploys
