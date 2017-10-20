@@ -17,3 +17,6 @@ rmp-serde = "0.13.7"
 strfmt = "0.1.5"
 serde = "1.0"
 serde_derive = "1.0"
+
+[dev-dependencies]
+serde_test = "1.0"

@@ -1,22 +1,35 @@
 [[himitsu]]
-name = "foobar"
-template = "{a} {b} {c}"
+name = 'foobar'
+executeable = '/bin/{b}'
+current_directory = 'Infer'
+arguments = [
+    '{c}',
+    '{d}',
+]
 
 [himitsu.secrets]
-a = "foo"
-b = "bar"
-c = "baz"
+a = 'foo'
+c = 'baz'
+b = 'bar'
 
 [[himitsu]]
-name = "nuke"
-template = "nuke estab --password {password}"
+name = 'nuke'
+executeable = 'nuke'
+current_directory = 'Inherit'
+arguments = [
+    'estab',
+    '--password',
+    '{password}',
+]
 
 [himitsu.secrets]
-password = "p@ssw0rd"
+password = 'p@ssw0rd'
 
 [[himitsu]]
-name = "cat"
-template = "cat {path}"
+name = 'cat'
+executeable = 'cat'
+current_directory = '/bin'
+arguments = ['{path}']
 
 [himitsu.secrets]
-path = "/etc/hosts"
+path = '/etc/hosts'

@@ -6,11 +6,18 @@ extern crate serde;
 extern crate serde_derive;
 extern crate strfmt;
 
+#[cfg(test)]
+extern crate serde_test;
+
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::fmt;
+use std::path::{Path, PathBuf};
 
 use ring::aead;
+use serde::ser::{Serialize, Serializer};
+use serde::de::{self, Deserialize, Deserializer, Visitor};
+use strfmt::strfmt;
 
 /// Length of key, in bytes
 pub const KEY_LENGTH: usize = 256 / 8;
@@ -104,11 +111,46 @@ pub struct EncryptedVault<'a> {
 pub struct Himitsu {
     /// Name of the secret for user identification
     pub name: String,
-    /// The template where the secrets will be templated into
-    pub template: String,
+    /// Path of the executeable
+    pub executeable: String,
+    /// Current Directory of the executeable
+    pub current_directory: CurrentDirectory,
+    /// List of arguments to the executeable
+    pub arguments: Vec<String>,
     /// Hash map of Secrets with their associated key
     // Note: This HashMap _must be_ the last: See https://github.com/alexcrichton/toml-rs/issues/142
     pub secrets: HashMap<String, String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+/// Current directory behaviour of the executeable
+///
+/// Depending on the enum selected, if the path cannot be inferred, we will default to the
+/// current process's working directory.
+pub enum CurrentDirectory {
+    /// Inherit the working directory of the current process
+    Inherit,
+    /// Infer from the path to the target executeable. If the target executeable does not have
+    /// its full path provided and is executed from $PATH or fails,
+    /// then this will default to the working directory of the currently process.
+    ///
+    /// This is simply a naive inference that calls
+    /// [`Path::parent`](https://doc.rust-lang.org/std/path/struct.Path.html#method.parent)
+    /// with no additional handling
+    Infer,
+    /// A specific working directory to be provided.
+    Specify(String),
+}
+
+/// An applied `Command` to be executed
+#[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
+pub struct Command {
+    /// The path to the executeable
+    pub executeable: String,
+    /// Current directory to run the command in
+    pub current_directory: Option<PathBuf>,
+    /// The arguments to the command
+    pub arguments: Vec<String>,
 }
 
 impl Vault {
@@ -184,17 +226,121 @@ impl<'a> EncryptedVault<'a> {
     }
 }
 
-
 impl Himitsu {
-    /// Apply the template string with the secrets
-    pub fn apply(&self) -> Result<String, Error> {
-        Ok(strfmt::strfmt(&self.template, &self.secrets)?)
+    /// Apply the template strings with the secrets
+    pub fn apply(&self) -> Result<Command, Error> {
+        let arguments = self.arguments
+            .iter()
+            .map(|arg| strfmt(arg, &self.secrets))
+            .collect::<Result<Vec<String>, strfmt::FmtError>>()?;
+
+        Ok(Command {
+            executeable: strfmt(&self.executeable, &self.secrets)?,
+            current_directory: self.current_directory
+                .apply(&self.executeable, &self.secrets)?,
+            arguments,
+        })
+    }
+}
+
+impl CurrentDirectory {
+    /// Apply the given secrets to derive the working directory
+    pub fn apply(
+        &self,
+        executeable: &str,
+        secrets: &HashMap<String, String>,
+    ) -> Result<Option<PathBuf>, Error> {
+        match *self {
+            CurrentDirectory::Inherit => Ok(None),
+            CurrentDirectory::Specify(ref path) => {
+                let applied_path = strfmt(path, secrets)?;
+                Ok(Some(From::from(&applied_path)))
+            }
+            CurrentDirectory::Infer => {
+                let path = Path::new(executeable);
+                if !path.has_root() {
+                    return Ok(None);
+                }
+                let parent = path.parent();
+                if let None = parent {
+                    return Ok(None);
+                }
+                let applied_parent = strfmt(parent.unwrap().to_string_lossy().as_ref(), secrets)?;
+                Ok(Some(From::from(&applied_parent)))
+            }
+        }
+    }
+}
+
+impl Serialize for CurrentDirectory {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let serialized = match *self {
+            CurrentDirectory::Infer => "Infer",
+            CurrentDirectory::Inherit => "Inherit",
+            CurrentDirectory::Specify(ref path) => path,
+        };
+
+        serializer.serialize_str(serialized)
+    }
+}
+
+impl<'de> Deserialize<'de> for CurrentDirectory {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct CurrentDirectoryVisitor;
+
+        impl<'de> Visitor<'de> for CurrentDirectoryVisitor {
+            type Value = CurrentDirectory;
+
+            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+                formatter.write_str("'Inherit', 'Infer' or a path string")
+            }
+
+            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            where
+                E: de::Error,
+            {
+                match value {
+                    "Inherit" => Ok(CurrentDirectory::Inherit),
+                    "Infer" => Ok(CurrentDirectory::Infer),
+                    others => Ok(CurrentDirectory::Specify(others.to_string())),
+                }
+            }
+        }
+
+        deserializer.deserialize_str(CurrentDirectoryVisitor)
+    }
+}
+
+impl From<Command> for std::process::Command {
+    fn from(command: Command) -> Self {
+        let mut to_command = std::process::Command::new(command.executeable);
+        to_command.args(command.arguments);
+
+        if let Some(path) = command.current_directory {
+            to_command.current_dir(path);
+        }
+        to_command
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use serde_test::{assert_tokens, Token};
+
+    #[derive(Eq, PartialEq, Debug, Serialize, Deserialize)]
+    struct SerdeCurrentDirectory {
+        inherit: CurrentDirectory,
+        infer: CurrentDirectory,
+        specify: CurrentDirectory,
+    }
 
     fn make_vault() -> Vault {
         let secrets = vec![make_himitsu(), make_himitsu(), make_himitsu()];
@@ -205,11 +351,17 @@ mod tests {
         Himitsu {
             name: "Test".to_string(),
             secrets: vec![
+                ("exe".to_string(), "cat".to_string()),
                 ("secret".to_string(), "foo".to_string()),
                 ("secret2".to_string(), "bar".to_string()),
             ].into_iter()
                 .collect(),
-            template: "{secret} is {secret2}".to_string(),
+            executeable: "/bin/{exe}".to_string(),
+            current_directory: CurrentDirectory::Specify("/bin".to_string()),
+            arguments: vec!["{secret}", "foo{secret2}"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
         }
     }
 
@@ -218,9 +370,16 @@ mod tests {
         let himitsu = make_himitsu();
 
         let applied = himitsu.apply().expect("to be successful");
-        let expected_applied = "foo is bar";
+        let expected_applied = Command {
+            executeable: "/bin/cat".to_string(),
+            current_directory: Some(From::from("/bin")),
+            arguments: vec!["foo", "foobar"]
+                .into_iter()
+                .map(|s| s.to_string())
+                .collect(),
+        };
 
-        assert_eq!(expected_applied, &applied);
+        assert_eq!(expected_applied, applied);
     }
 
     #[test]
@@ -239,5 +398,146 @@ mod tests {
             Vault::decrypt(&encrypted_vault, password.as_bytes()).expect("to not fail");
 
         assert_eq!(vault, decrypted_vault);
+    }
+
+    #[test]
+    fn serde_current_directory() {
+        let value = SerdeCurrentDirectory {
+            inherit: CurrentDirectory::Inherit,
+            infer: CurrentDirectory::Infer,
+            specify: CurrentDirectory::Specify("/dev/null".to_string()),
+        };
+
+        assert_tokens(
+            &value,
+            &[
+                Token::Struct {
+                    name: "SerdeCurrentDirectory",
+                    len: 3,
+                },
+                Token::Str("inherit"),
+                Token::Str("Inherit"),
+                Token::Str("infer"),
+                Token::Str("Infer"),
+                Token::Str("specify"),
+                Token::Str("/dev/null"),
+                Token::StructEnd,
+            ],
+        );
+    }
+
+    #[cfg(target_family = "unix")]
+    mod unix {
+        use super::*;
+
+        #[test]
+        fn current_directory_inherit_applied_correctly() {
+            let curent_directory = CurrentDirectory::Inherit;
+            let actual = curent_directory
+                .apply("/bin/cat", &HashMap::new())
+                .expect("to succeed");
+            assert_eq!(None, actual);
+        }
+
+        #[test]
+        fn current_directory_is_specified_and_applied_correctly() {
+            let himitsu = make_himitsu();
+            let curent_directory = CurrentDirectory::Specify("/{secret}/{secret2}/baz".to_string());
+
+            let expected = Some(From::from("/foo/bar/baz"));
+            let actual = curent_directory
+                .apply("/bin/cat", &himitsu.secrets)
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn current_directory_is_inferred_correctly() {
+            let curent_directory = CurrentDirectory::Infer;
+
+            let expected = Some(From::from("/bin"));
+            let actual = curent_directory
+                .apply("/bin/cat", &HashMap::new())
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn current_directory_inference_returns_none_when_executeable_does_not_have_root() {
+            let curent_directory = CurrentDirectory::Infer;
+
+            let expected = None;
+            let actual = curent_directory
+                .apply("bash", &HashMap::new())
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+    }
+
+    #[cfg(target_family = "windows")]
+    mod unix {
+        use super::*;
+
+        #[test]
+        fn current_directory_inherit_applied_correctly() {
+            let curent_directory = CurrentDirectory::Inherit;
+            let actual = curent_directory
+                .apply("c:\\windows\\system32\\cmd.exe", &HashMap::new())
+                .expect("to succeed");
+            assert_eq!(None, actual);
+        }
+
+        #[test]
+        fn current_directory_is_specified_and_applied_correctly() {
+            let himitsu = make_himitsu();
+            let curent_directory =
+                CurrentDirectory::Specify("c:\\secret}\\{secret2}\\baz".to_string());
+
+            let expected = Some(From::from("c:\\foo\\bar\\baz"));
+            let actual = curent_directory
+                .apply("c:\\windows\\system32\\cmd.exe", &himitsu.secrets)
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn current_directory_is_inferred_with_disk_prefix() {
+            let curent_directory = CurrentDirectory::Infer;
+
+            let expected = Some(From::from("c:\\windows\\system32"));
+            let actual = curent_directory
+                .apply("c:\\windows\\system32\\cmd.exe", &HashMap::new())
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn current_directory_is_inferred_with_non_disk_prefix() {
+            let curent_directory = CurrentDirectory::Infer;
+
+            let expected = Some(From::from("\\drive\\something"));
+            let actual = curent_directory
+                .apply("\\drive\\something\\cmd.exe", &HashMap::new())
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
+
+        #[test]
+        fn current_directory_inference_returns_none_when_executeable_does_not_have_root() {
+            let curent_directory = CurrentDirectory::Infer;
+
+            let expected = None;
+            let actual = curent_directory
+                .apply("c:windows\\system32\\cmd.exe", &HashMap::new())
+                .expect("to succeed");
+
+            assert_eq!(actual, expected);
+        }
     }
 }

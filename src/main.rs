@@ -58,6 +58,7 @@ fn run_subcommand(args: &ArgMatches) -> Result<(), String> {
     match args.subcommand() {
         ("encrypt", Some(args)) => run_encrypt(args),
         ("decrypt", Some(args)) => run_decrypt(args),
+        ("launch", Some(args)) => run_launch(args),
         _ => Err("Unknown command or missing options".to_string()),
     }
 }
@@ -170,6 +171,10 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
             .write_all(serialized.as_bytes())
             .map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+fn run_launch(args: &ArgMatches) -> Result<(), String> {
     Ok(())
 }
 
@@ -334,6 +339,46 @@ where
                 .required(true),
         );
 
+    let launch = SubCommand::with_name("launch")
+        .about(
+            "Launch applications from a vault with the decryption password and item name. \n\n\
+             Hint: You can use `decrypt` to view the contents of your vault. Simply use `-`\
+             to print the output to STDOUT",
+        )
+        .arg(
+            Arg::with_name("password")
+                .help(
+                    "Instead of prompting for a password, use the password from the provided path \
+                     instead. Use `-` to refer to STDIN",
+                )
+                .short("p")
+                .long("password")
+                .takes_value(true)
+                .empty_values(false)
+                .value_name("path"),
+        )
+        .arg(
+            Arg::with_name("input")
+                .index(1)
+                .help(
+                    "Specifies the path to read the encrypted vault from. \
+                     Use - to refer to STDIN",
+                )
+                .takes_value(true)
+                .value_name("input_path")
+                .empty_values(false)
+                .required(true),
+        )
+        .arg(
+            Arg::with_name("item")
+                .index(2)
+                .help("Specifies item to launch.")
+                .takes_value(true)
+                .value_name("item")
+                .empty_values(false)
+                .required(true),
+        );
+
     App::new(crate_name!())
         .version(crate_version!())
         .author(crate_authors!())
@@ -352,6 +397,7 @@ where
         )
         .subcommand(encrypt)
         .subcommand(decrypt)
+        .subcommand(launch)
 }
 
 /// Gets a `Read` depending on the path. If the path is `-`, read from STDIN
@@ -477,6 +523,10 @@ mod tests {
         include_str!("../tests/fixtures/decrypted.json")
     }
 
+    fn encrypted_fixture() -> &'static [u8] {
+        include_bytes!("../tests/fixtures/encrypted.bin")
+    }
+
     fn to_cursor<F, T>(fixture: F) -> Cursor<T>
     where
         F: Fn() -> T,
@@ -505,6 +555,15 @@ mod tests {
             2,
             dash_count([Some("test"), None, Some("-"), Some("-")].into_iter())
         );
+    }
+
+    #[test]
+    fn decryption_works() {
+        let expected = fixture();
+
+        let decrypted =
+            decrypt(to_cursor(encrypted_fixture), PASSWORD.as_bytes()).expect("to not fail");
+        assert_eq!(expected, decrypted);
     }
 
     #[test]
@@ -819,8 +878,7 @@ mod tests {
 
         let expected = fixture();
         file.seek(std::io::SeekFrom::Start(0)).expect("to succeed");
-        let actual =
-            deserialize_vault(&mut file, Format::Toml).expect("to deserialize correctly");
+        let actual = deserialize_vault(&mut file, Format::Toml).expect("to deserialize correctly");
         assert_eq!(actual, expected);
     }
 }

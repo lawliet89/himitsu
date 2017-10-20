@@ -2,18 +2,30 @@
 himitsu:
   -
     name: foobar
-    template: "{a} {b} {c}"
+    executeable: "/bin/{b}"
+    current_directory: Infer
+    arguments:
+      - "{c}"
+      - "{d}"
     secrets:
       a: foo
-      c: baz
       b: bar
+      c: baz
   -
     name: nuke
-    template: "nuke estab --password {password}"
+    executeable: nuke
+    current_directory: Inherit
+    arguments:
+      - estab
+      - "--password"
+      - "{password}"
     secrets:
       password: "p@ssw0rd"
   -
     name: cat
-    template: "cat {path}"
+    executeable: cat
+    current_directory: /bin
+    arguments:
+      - "{path}"
     secrets:
       path: /etc/hosts
