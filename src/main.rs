@@ -13,9 +13,10 @@ extern crate tempdir;
 
 use std::fs::File;
 use std::io::{self, Read, Write};
+use std::process;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
-use libhimitsu::Vault;
+use libhimitsu::{Vault, Command};
 use rand::{OsRng, Rng};
 
 arg_enum! {
@@ -156,7 +157,7 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
             .map_err(|e| e.to_string())?,
     };
 
-    let input = input_reader(input)?; // safe to unwrap
+    let input = input_reader(input)?;
 
     // Read and decrypt the vault. Drop the handler so that we can write back to the same file
     let vault = decrypt(input, password.as_bytes())?;
@@ -166,7 +167,7 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
 
     // Write
     {
-        let mut output = output_writer(output)?; // safe to unwrap
+        let mut output = output_writer(output)?;
         let _ = output
             .write_all(serialized.as_bytes())
             .map_err(|e| e.to_string())?;
@@ -175,6 +176,31 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
 }
 
 fn run_launch(args: &ArgMatches) -> Result<(), String> {
+    let input = args.value_of("input")
+        .expect("Required argument is provided");
+
+    let item_name = args.value_of("item")
+        .expect("Required argument is provided");
+    let password = args.value_of("password");
+
+    if dash_count([Some(&input), password.as_ref()].into_iter()) > 1 {
+        Err("Only one input source can be from STDIN")?
+    }
+
+    let password = match password {
+        Some(path) => {
+            let reader = input_reader(path)?;
+            let buffer = read_to_vec(reader)?;
+            String::from_utf8(buffer).map_err(|e| e.to_string())?
+        }
+        None => rpassword::prompt_password_stdout("Enter the password to decrypt the vault with: ")
+            .map_err(|e| e.to_string())?,
+    };
+
+    let input = input_reader(input)?;
+    let command = get_command(input, password.as_bytes(), &item_name)?;
+    let mut command = process::Command::from(command);
+    let _ = command.spawn().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -208,6 +234,18 @@ fn decrypt<R: Read>(input: R, password: &[u8]) -> Result<Vault, String> {
     let buffer = read_to_vec(input)?;
     // Decrypt the input
     Vault::decrypt(&buffer, password).map_err(|e| e.to_string())
+}
+
+fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Command, String> {
+    let vault = decrypt(input, password)?;
+
+    let item = vault
+        .himitsu
+        .iter()
+        .find(|himitsu| himitsu.name == item_name)
+        .ok_or_else(|| format!("{} was not found in the vault", item_name))?;
+
+    Ok(item.apply().map_err(|e| e.to_string())?)
 }
 
 /// Make a command line parser for options
@@ -670,6 +708,21 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "Only one input source can be from STDIN")]
+    /// Only one input from STDIN is allowed
+    fn launch_stdin_validated_correctly() {
+        let parser = make_parser();
+        let args = vec!["himitsu", "launch", "--password=-", "-", "cat"];
+        let matches = parser
+            .get_matches_from_safe(args)
+            .expect("parsing to succeed");
+        let subcommand = matches
+            .subcommand_matches("launch")
+            .expect("to be decrypt subcommand");
+        run_launch(&subcommand).unwrap();
+    }
+
+    #[test]
     fn encrypt_decrypt_roundtrip_toml() {
         let directory = tempdir();
         let decrypted_path = tempfile(&directory, "decrypted.toml");
@@ -919,5 +972,17 @@ mod tests {
         let actual =
             deserialize_vault(&mut decrypted, Format::Toml).expect("to deserialize correctly");
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn launch_creates_the_right_command() {
+        let encrypted = to_cursor(encrypted_fixture);
+        let command = get_command(encrypted, PASSWORD.as_bytes(), "cat").expect("to succeed");
+        let expected = Command {
+            executeable: "cat".to_string(),
+            current_directory: Some(From::from("/bin")),
+            arguments: vec!["/etc/hosts".to_string()]
+        };
+        assert_eq!(command, expected);
     }
 }

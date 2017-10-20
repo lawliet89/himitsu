@@ -114,11 +114,14 @@ pub struct Himitsu {
     /// Path of the executeable
     pub executeable: String,
     /// Current Directory of the executeable
+    #[serde(default)]
     pub current_directory: CurrentDirectory,
     /// List of arguments to the executeable
+    #[serde(default)]
     pub arguments: Vec<String>,
     /// Hash map of Secrets with their associated key
     // Note: This HashMap _must be_ the last: See https://github.com/alexcrichton/toml-rs/issues/142
+    #[serde(default)]
     pub secrets: HashMap<String, String>,
 }
 
@@ -269,6 +272,12 @@ impl CurrentDirectory {
                 Ok(Some(From::from(&applied_parent)))
             }
         }
+    }
+}
+
+impl Default for CurrentDirectory {
+    fn default() -> Self {
+        CurrentDirectory::Infer
     }
 }
 
