@@ -494,7 +494,7 @@ mod tests {
         fn current_directory_is_specified_and_applied_correctly() {
             let himitsu = make_himitsu();
             let curent_directory =
-                CurrentDirectory::Specify("c:\\secret}\\{secret2}\\baz".to_string());
+                CurrentDirectory::Specify("c:\\{secret}\\{secret2}\\baz".to_string());
 
             let expected = Some(From::from("c:\\foo\\bar\\baz"));
             let actual = curent_directory
