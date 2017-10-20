@@ -43,10 +43,11 @@ test_script:
   # we don't run the "test phase" when doing deploys
   - if [%APPVEYOR_REPO_TAG%]==[false] (
       cargo build --target %TARGET% --all &&
-      cargo build --target %TARGET% --all --release &&
-      cargo test --target %TARGET% &&
-      cargo test --target %TARGET% --all --release &&
+      cargo build --target %TARGET% --release --all &&
+      cargo test --target %TARGET% --all &&
+      cargo test --target %TARGET% --release --all
     )
+
 
 before_deploy:
   # TODO Update this to build the artifacts that matter to you
