@@ -16,7 +16,7 @@ use std::io::{self, Read, Write};
 use std::process;
 
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
-use libhimitsu::{Vault, Command};
+use libhimitsu::{Command, Vault};
 use rand::{OsRng, Rng};
 
 arg_enum! {
@@ -45,14 +45,28 @@ impl Format {
 fn main() {
     let args = make_parser().get_matches();
     let result = run_subcommand(&args);
+    let fail_silent = args.is_present("fail_silent");
 
     std::process::exit(match result {
         Ok(()) => 0,
         Err(e) => {
-            println!("Error: {}", e);
+            println!("\nError: {}", e);
+            if !fail_silent {
+                println!("Press enter to continue.");
+                read_stdin().expect("Enter to be pressed");
+            }
             1
         }
     });
+}
+
+/// Wait for any input and throw away the input. Useful for "press enter to continue".
+fn read_stdin() -> Result<(), String> {
+    let mut stdin = io::stdin();
+    let mut buffer = vec![0; 1];
+    // Read one byte
+    let _ = stdin.read_exact(&mut buffer).map_err(|e| e.to_string());
+    Ok(())
 }
 
 fn run_subcommand(args: &ArgMatches) -> Result<(), String> {
@@ -424,7 +438,6 @@ where
         .setting(AppSettings::VersionlessSubcommands)
         .setting(AppSettings::PropagateGlobalValuesDown)
         .setting(AppSettings::InferSubcommands)
-        .setting(AppSettings::ArgsNegateSubcommands)
         .global_setting(AppSettings::DontCollapseArgsInUsage)
         .global_setting(AppSettings::NextLineHelp)
         .about(
@@ -432,6 +445,14 @@ where
              stored in an encrypted form.\
              Encryption keys are derived from passwords using `argon2i` and encryption is \
              performed with `ChaCha20-Poly1305`.",
+        )
+        .arg(
+            Arg::with_name("fail_silent")
+                .long("fail-silent")
+                .help(
+                    "Instead of asking for the user to confirm any failure, \
+                     exit immediately on failure silently.",
+                ),
         )
         .subcommand(encrypt)
         .subcommand(decrypt)
@@ -981,7 +1002,7 @@ mod tests {
         let expected = Command {
             executeable: "cat".to_string(),
             current_directory: Some(From::from("/bin")),
-            arguments: vec!["/etc/hosts".to_string()]
+            arguments: vec!["/etc/hosts".to_string()],
         };
         assert_eq!(command, expected);
     }
