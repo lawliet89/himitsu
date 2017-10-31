@@ -1,5 +1,7 @@
 #[macro_use]
 extern crate clap;
+#[macro_use]
+extern crate error_chain;
 extern crate libhimitsu;
 extern crate rand;
 extern crate rpassword;
@@ -18,6 +20,22 @@ use std::process;
 use clap::{App, AppSettings, Arg, ArgMatches, SubCommand};
 use libhimitsu::{Command, Vault};
 use rand::{OsRng, Rng};
+
+error_chain!{
+    links {
+        VaultError(libhimitsu::Error, libhimitsu::ErrorKind);
+    }
+
+    foreign_links {
+        IOError(std::io::Error);
+        CommandLineError(clap::Error);
+        UnicodeError(std::string::FromUtf8Error);
+        TomlSerializationError(toml::ser::Error);
+        TomlDeserializationError(toml::de::Error);
+        JsonError(serde_json::Error);
+        YamlError(serde_yaml::Error);
+    }
+}
 
 arg_enum! {
     #[derive(Debug)]
@@ -50,7 +68,20 @@ fn main() {
     std::process::exit(match result {
         Ok(()) => 0,
         Err(e) => {
-            println!("\nError: {}", e);
+            let stderr = &mut ::std::io::stderr();
+            let stderr_failure = "Error writing to stderr";
+            writeln!(stderr, "error: {}", e).expect(stderr_failure);
+
+            for e in e.iter().skip(1) {
+                writeln!(stderr, "caused by: {}", e).expect(stderr_failure);
+            }
+
+            // The backtrace is not always generated. Try to run this example
+            // with `RUST_BACKTRACE=1`.
+            if let Some(backtrace) = e.backtrace() {
+                writeln!(stderr, "backtrace: {:?}", backtrace).expect(stderr_failure);
+            }
+
             if !fail_silent {
                 println!("Press enter to continue.");
                 read_stdin().expect("Enter to be pressed");
@@ -61,24 +92,24 @@ fn main() {
 }
 
 /// Wait for any input and throw away the input. Useful for "press enter to continue".
-fn read_stdin() -> Result<(), String> {
+fn read_stdin() -> Result<()> {
     let mut stdin = io::stdin();
     let mut buffer = vec![0; 1];
     // Read one byte
-    let _ = stdin.read_exact(&mut buffer).map_err(|e| e.to_string());
+    let _ = stdin.read_exact(&mut buffer)?;
     Ok(())
 }
 
-fn run_subcommand(args: &ArgMatches) -> Result<(), String> {
+fn run_subcommand(args: &ArgMatches) -> Result<()> {
     match args.subcommand() {
         ("encrypt", Some(args)) => run_encrypt(args),
         ("decrypt", Some(args)) => run_decrypt(args),
         ("launch", Some(args)) => run_launch(args),
-        _ => Err("Unknown command or missing options".to_string()),
+        _ => Err("Unknown command or missing options".to_string())?,
     }
 }
 
-fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
+fn run_encrypt(args: &ArgMatches) -> Result<()> {
     let input = args.value_of("input")
         .expect("Required argument is provided");
     let output = args.value_of("output")
@@ -88,7 +119,7 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
     let salt = args.value_of("salt");
     let password = args.value_of("password");
 
-    let format = value_t!(args, "format", Format).map_err(|e| e.to_string())?;
+    let format = value_t!(args, "format", Format)?;
 
     if dash_count(
         [
@@ -119,15 +150,14 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
             Some(path) => {
                 let reader = input_reader(path)?;
                 let buffer = read_to_vec(reader)?;
-                String::from_utf8(buffer).map_err(|e| e.to_string())?
+                String::from_utf8(buffer)?
             }
             None => {
                 let password = rpassword::prompt_password_stdout(
                     "Enter the password to encrypt the vault with: ",
-                ).map_err(|e| e.to_string())?;
+                )?;
 
-                let confirmation = rpassword::prompt_password_stdout("Confirm your password: ")
-                    .map_err(|e| e.to_string())?;
+                let confirmation = rpassword::prompt_password_stdout("Confirm your password: ")?;
 
                 if password != confirmation {
                     Err("Passwords entered do not match".to_string())?
@@ -142,12 +172,12 @@ fn run_encrypt(args: &ArgMatches) -> Result<(), String> {
     // Write
     {
         let mut output = output_writer(output)?; // safe to unwrap
-        let _ = output.write_all(&encrypted).map_err(|e| e.to_string())?;
+        let _ = output.write_all(&encrypted)?;
     }
     Ok(())
 }
 
-fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
+fn run_decrypt(args: &ArgMatches) -> Result<()> {
     let input = args.value_of("input")
         .expect("Required argument is provided");
     let output = args.value_of("output")
@@ -155,7 +185,7 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
 
     let password = args.value_of("password");
 
-    let format = value_t!(args, "format", Format).map_err(|e| e.to_string())?;
+    let format = value_t!(args, "format", Format)?;
 
     if dash_count([Some(&input), password.as_ref()].into_iter()) > 1 {
         Err("Only one input source can be from STDIN")?
@@ -165,10 +195,11 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
         Some(path) => {
             let reader = input_reader(path)?;
             let buffer = read_to_vec(reader)?;
-            String::from_utf8(buffer).map_err(|e| e.to_string())?
+            String::from_utf8(buffer)?
         }
-        None => rpassword::prompt_password_stdout("Enter the password to decrypt the vault with: ")
-            .map_err(|e| e.to_string())?,
+        None => {
+            rpassword::prompt_password_stdout("Enter the password to decrypt the vault with: ")?
+        }
     };
 
     let input = input_reader(input)?;
@@ -182,14 +213,12 @@ fn run_decrypt(args: &ArgMatches) -> Result<(), String> {
     // Write
     {
         let mut output = output_writer(output)?;
-        let _ = output
-            .write_all(serialized.as_bytes())
-            .map_err(|e| e.to_string())?;
+        let _ = output.write_all(serialized.as_bytes())?;
     }
     Ok(())
 }
 
-fn run_launch(args: &ArgMatches) -> Result<(), String> {
+fn run_launch(args: &ArgMatches) -> Result<()> {
     let input = args.value_of("input")
         .expect("Required argument is provided");
 
@@ -205,16 +234,17 @@ fn run_launch(args: &ArgMatches) -> Result<(), String> {
         Some(path) => {
             let reader = input_reader(path)?;
             let buffer = read_to_vec(reader)?;
-            String::from_utf8(buffer).map_err(|e| e.to_string())?
+            String::from_utf8(buffer)?
         }
-        None => rpassword::prompt_password_stdout("Enter the password to decrypt the vault with: ")
-            .map_err(|e| e.to_string())?,
+        None => {
+            rpassword::prompt_password_stdout("Enter the password to decrypt the vault with: ")?
+        }
     };
 
     let input = input_reader(input)?;
     let command = get_command(input, password.as_bytes(), &item_name)?;
     let mut command = process::Command::from(command);
-    let _ = command.spawn().map_err(|e| e.to_string())?;
+    let _ = command.spawn()?;
     Ok(())
 }
 
@@ -225,7 +255,7 @@ fn encrypt<R1, R2, R3>(
     input: R1,
     nonce: Option<R2>,
     salt: Option<R3>,
-) -> Result<Vec<u8>, String>
+) -> Result<Vec<u8>>
 where
     R1: Read,
     R2: Read,
@@ -236,21 +266,19 @@ where
     let nonce = read_or_rng(nonce, libhimitsu::NONCE_LENGTH)?;
     let salt = read_or_rng(salt, 32)?;
     // Perform the encryption
-    let encrypted = vault
-        .encrypt(password, &salt, &nonce)
-        .map_err(|e| e.to_string())?;
+    let encrypted = vault.encrypt(password, &salt, &nonce)?;
 
     Ok(encrypted)
 }
 
 /// Performs decryption
-fn decrypt<R: Read>(input: R, password: &[u8]) -> Result<Vault, String> {
+fn decrypt<R: Read>(input: R, password: &[u8]) -> Result<Vault> {
     let buffer = read_to_vec(input)?;
     // Decrypt the input
-    Vault::decrypt(&buffer, password).map_err(|e| e.to_string())
+    Ok(Vault::decrypt(&buffer, password)?)
 }
 
-fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Command, String> {
+fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Command> {
     let vault = decrypt(input, password)?;
 
     let item = vault
@@ -259,7 +287,7 @@ fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Co
         .find(|himitsu| himitsu.name == item_name)
         .ok_or_else(|| format!("{} was not found in the vault", item_name))?;
 
-    Ok(item.apply().map_err(|e| e.to_string())?)
+    Ok(item.apply()?)
 }
 
 /// Make a command line parser for options
@@ -436,7 +464,6 @@ where
         .author(crate_authors!())
         .setting(AppSettings::SubcommandRequired)
         .setting(AppSettings::VersionlessSubcommands)
-        .setting(AppSettings::PropagateGlobalValuesDown)
         .setting(AppSettings::InferSubcommands)
         .global_setting(AppSettings::DontCollapseArgsInUsage)
         .global_setting(AppSettings::NextLineHelp)
@@ -446,21 +473,17 @@ where
              Encryption keys are derived from passwords using `argon2i` and encryption is \
              performed with `ChaCha20-Poly1305`.",
         )
-        .arg(
-            Arg::with_name("fail_silent")
-                .long("fail-silent")
-                .help(
-                    "Instead of asking for the user to confirm any failure, \
-                     exit immediately on failure silently.",
-                ),
-        )
+        .arg(Arg::with_name("fail_silent").long("fail-silent").help(
+            "Instead of asking for the user to confirm any failure, \
+             exit immediately on failure silently.",
+        ))
         .subcommand(encrypt)
         .subcommand(decrypt)
         .subcommand(launch)
 }
 
 /// Gets a `Read` depending on the path. If the path is `-`, read from STDIN
-fn input_reader(path: &str) -> Result<Box<Read>, String> {
+fn input_reader(path: &str) -> Result<Box<Read>> {
     match path {
         "-" => Ok(Box::new(io::stdin())),
         path => {
@@ -471,7 +494,7 @@ fn input_reader(path: &str) -> Result<Box<Read>, String> {
 }
 
 /// Gets a `Write` depending on the path. If the path is `-`, write to STDOUT
-fn output_writer(path: &str) -> Result<Box<Write>, String> {
+fn output_writer(path: &str) -> Result<Box<Write>> {
     match path {
         "-" => Ok(Box::new(io::stdout())),
         path => {
@@ -482,19 +505,19 @@ fn output_writer(path: &str) -> Result<Box<Write>, String> {
 }
 
 /// Read a `Reader` to a vector of bytes
-fn read_to_vec<R: Read>(mut reader: R) -> Result<Vec<u8>, String> {
+fn read_to_vec<R: Read>(mut reader: R) -> Result<Vec<u8>> {
     let mut buffer = Vec::new();
-    let _ = reader.read_to_end(&mut buffer).map_err(|e| e.to_string())?;
+    let _ = reader.read_to_end(&mut buffer)?;
     Ok(buffer)
 }
 
 /// Read some bytes from path, or randomly generate
-fn read_or_rng<R: Read>(reader: Option<R>, length: usize) -> Result<Vec<u8>, String> {
+fn read_or_rng<R: Read>(reader: Option<R>, length: usize) -> Result<Vec<u8>> {
     match reader {
         Some(reader) => read_to_vec(reader),
         None => {
             let mut buffer = vec![0; length];
-            let mut rng = OsRng::new().map_err(|e| e.to_string())?;
+            let mut rng = OsRng::new()?;
             rng.fill_bytes(&mut buffer);
             Ok(buffer)
         }
@@ -502,20 +525,20 @@ fn read_or_rng<R: Read>(reader: Option<R>, length: usize) -> Result<Vec<u8>, Str
 }
 
 /// Serialize a vault to some formatted string
-fn serialize_vault(vault: &Vault, format: Format) -> Result<String, String> {
+fn serialize_vault(vault: &Vault, format: Format) -> Result<String> {
     Ok(match format {
-        Format::Toml => toml::to_string_pretty(&vault).map_err(|e| e.to_string())?,
-        Format::Json => serde_json::to_string_pretty(&vault).map_err(|e| e.to_string())?,
-        Format::Yaml => serde_yaml::to_string(&vault).map_err(|e| e.to_string())?,
+        Format::Toml => toml::to_string_pretty(&vault)?,
+        Format::Json => serde_json::to_string_pretty(&vault)?,
+        Format::Yaml => serde_yaml::to_string(&vault)?,
     })
 }
 
 /// Deserialize a vault from a Reader
-fn deserialize_vault<R: Read>(reader: R, format: Format) -> Result<Vault, String> {
+fn deserialize_vault<R: Read>(reader: R, format: Format) -> Result<Vault> {
     let vault: Vault = match format {
-        Format::Toml => toml::from_slice(&read_to_vec(reader)?).map_err(|e| e.to_string())?,
-        Format::Json => serde_json::from_reader(reader).map_err(|e| e.to_string())?,
-        Format::Yaml => serde_yaml::from_reader(reader).map_err(|e| e.to_string())?,
+        Format::Toml => toml::from_slice(&read_to_vec(reader)?)?,
+        Format::Json => serde_json::from_reader(reader)?,
+        Format::Yaml => serde_yaml::from_reader(reader)?,
     };
     Ok(vault)
 }

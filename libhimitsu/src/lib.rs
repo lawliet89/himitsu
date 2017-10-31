@@ -1,4 +1,6 @@
 extern crate argon2rs;
+#[macro_use]
+extern crate error_chain;
 extern crate ring;
 extern crate rmp_serde as rmps;
 extern crate serde;
@@ -26,63 +28,14 @@ pub const NONCE_LENGTH: usize = 96 / 8;
 /// Length of the tag, in bytes
 pub const TAG_LENGTH: usize = 128 / 8;
 
-/// Error type for returned errors
-#[derive(Debug)]
-pub enum Error {
-    /// Error applying template
-    TemplateError(strfmt::FmtError),
-    /// Error encountered while packing data
-    EncodingError(rmps::encode::Error),
-    /// Error encountered while unpacking data
-    DecodingError(rmps::decode::Error),
-    /// Cryotpgraohic Error
-    CryptographicError(ring::error::Unspecified),
-}
-
-impl std::error::Error for Error {
-    fn description(&self) -> &str {
-        match *self {
-            Error::TemplateError(ref e) => e.description(),
-            Error::EncodingError(ref e) => e.description(),
-            Error::DecodingError(ref e) => e.description(),
-            Error::CryptographicError(ref e) => e.description(),
-        }
-    }
-
-    fn cause(&self) -> Option<&std::error::Error> {
-        match *self {
-            Error::TemplateError(ref e) => Some(e),
-            Error::EncodingError(ref e) => Some(e),
-            Error::DecodingError(ref e) => Some(e),
-            Error::CryptographicError(ref e) => Some(e),
-        }
+error_chain! {
+    foreign_links {
+        TemplateError(strfmt::FmtError);
+        EncodingError(rmps::encode::Error);
+        DecodingError(rmps::decode::Error);
+        CryptographicError(ring::error::Unspecified);
     }
 }
-
-impl fmt::Display for Error {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match *self {
-            Error::TemplateError(ref e) => fmt::Display::fmt(e, f),
-            Error::EncodingError(ref e) => fmt::Display::fmt(e, f),
-            Error::DecodingError(ref e) => fmt::Display::fmt(e, f),
-            Error::CryptographicError(ref e) => fmt::Display::fmt(e, f),
-        }
-    }
-}
-
-/// Implement a straightforward conversion of error type
-macro_rules! impl_from_error {
-    ($f: ty, $e: expr) => {
-        impl From<$f> for Error {
-            fn from(f: $f) -> Error { $e(f) }
-        }
-    }
-}
-
-impl_from_error!(strfmt::FmtError, Error::TemplateError);
-impl_from_error!(rmps::encode::Error, Error::EncodingError);
-impl_from_error!(rmps::decode::Error, Error::DecodingError);
-impl_from_error!(ring::error::Unspecified, Error::CryptographicError);
 
 /// The vault of secrets and their associated launch parameters
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
@@ -161,13 +114,13 @@ impl Vault {
     ///
     /// The salt must be between between 8 and 2^32-1 bytes
     /// The nonce must be 12 bytes long
-    pub fn encrypt(&self, password: &[u8], salt: &[u8], nonce: &[u8]) -> Result<Vec<u8>, Error> {
+    pub fn encrypt(&self, password: &[u8], salt: &[u8], nonce: &[u8]) -> Result<Vec<u8>> {
         let encrypted_vault = EncryptedVault::encrypt(self, password, salt, nonce)?;
         encrypted_vault.pack()
     }
 
     /// Based on the provided encrypted payload and password, decrypt the vault
-    pub fn decrypt(encrypted_vault: &[u8], password: &[u8]) -> Result<Self, Error> {
+    pub fn decrypt(encrypted_vault: &[u8], password: &[u8]) -> Result<Self> {
         let vault = EncryptedVault::unpack(encrypted_vault)?;
         vault.decrypt(password)
     }
@@ -188,7 +141,7 @@ impl<'a> EncryptedVault<'a> {
         password: &[u8],
         salt: &'a [u8],
         nonce: &'a [u8],
-    ) -> Result<Self, Error> {
+    ) -> Result<Self> {
         let key = Self::derive_key(password, salt);
         let sealing_key = aead::SealingKey::new(&aead::CHACHA20_POLY1305, &key)?;
 
@@ -206,7 +159,7 @@ impl<'a> EncryptedVault<'a> {
     }
 
     /// Given an encrypted payload, decrypt the vault
-    pub fn decrypt(&self, password: &[u8]) -> Result<Vault, Error> {
+    pub fn decrypt(&self, password: &[u8]) -> Result<Vault> {
         let key = Self::derive_key(password, &self.salt);
         let opening_key = aead::OpeningKey::new(&aead::CHACHA20_POLY1305, &key)?;
 
@@ -219,23 +172,23 @@ impl<'a> EncryptedVault<'a> {
     }
 
     /// Pack the encrypted vault into a binary format
-    pub fn pack(&self) -> Result<Vec<u8>, Error> {
+    pub fn pack(&self) -> Result<Vec<u8>> {
         Ok(rmps::to_vec_named(self)?)
     }
 
     /// Unpack a given slice into the encrypted form
-    pub fn unpack(packed: &'a [u8]) -> Result<Self, Error> {
+    pub fn unpack(packed: &'a [u8]) -> Result<Self> {
         Ok(rmps::from_slice(packed)?)
     }
 }
 
 impl Himitsu {
     /// Apply the template strings with the secrets
-    pub fn apply(&self) -> Result<Command, Error> {
+    pub fn apply(&self) -> Result<Command> {
         let arguments = self.arguments
             .iter()
             .map(|arg| strfmt(arg, &self.secrets))
-            .collect::<Result<Vec<String>, strfmt::FmtError>>()?;
+            .collect::<::std::result::Result<Vec<String>, strfmt::FmtError>>()?;
 
         Ok(Command {
             executeable: strfmt(&self.executeable, &self.secrets)?,
@@ -252,7 +205,7 @@ impl CurrentDirectory {
         &self,
         executeable: &str,
         secrets: &HashMap<String, String>,
-    ) -> Result<Option<PathBuf>, Error> {
+    ) -> Result<Option<PathBuf>> {
         match *self {
             CurrentDirectory::Inherit => Ok(None),
             CurrentDirectory::Specify(ref path) => {
@@ -282,7 +235,7 @@ impl Default for CurrentDirectory {
 }
 
 impl Serialize for CurrentDirectory {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    fn serialize<S>(&self, serializer: S) -> ::std::result::Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
@@ -297,7 +250,7 @@ impl Serialize for CurrentDirectory {
 }
 
 impl<'de> Deserialize<'de> for CurrentDirectory {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    fn deserialize<D>(deserializer: D) -> ::std::result::Result<Self, D::Error>
     where
         D: Deserializer<'de>,
     {
@@ -310,7 +263,7 @@ impl<'de> Deserialize<'de> for CurrentDirectory {
                 formatter.write_str("'Inherit', 'Infer' or a path string")
             }
 
-            fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+            fn visit_str<E>(self, value: &str) -> ::std::result::Result<Self::Value, E>
             where
                 E: de::Error,
             {
