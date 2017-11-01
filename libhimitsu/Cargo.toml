@@ -12,6 +12,7 @@ doc = true
 
 [dependencies]
 argon2rs = "0.2.5"
+error-chain = "0.11.0"
 ring = "0.12.1"
 rmp-serde = "0.13.7"
 strfmt = "0.1.5"
