@@ -83,12 +83,18 @@ fn main() {
             }
 
             if !fail_silent {
-                println!("Press enter to continue.");
-                read_stdin().expect("Enter to be pressed");
+                prompt_enter().expect("Enter to be pressed");
             }
             1
         }
     });
+}
+
+/// Prompts the user to "Press enter to continue"
+fn prompt_enter() -> Result<()> {
+    println!("Press enter to continue.");
+    let _ = read_stdin()?;
+    Ok(())
 }
 
 /// Wait for any input and throw away the input. Useful for "press enter to continue".
@@ -221,10 +227,12 @@ fn run_decrypt(args: &ArgMatches) -> Result<()> {
 fn run_launch(args: &ArgMatches) -> Result<()> {
     let input = args.value_of("input")
         .expect("Required argument is provided");
-
-    let item_name = args.value_of("item")
-        .expect("Required argument is provided");
+    let items: Vec<&str> = args.values_of("item")
+        .expect("Required argument is provided")
+        .collect();
     let password = args.value_of("password");
+    let auto_chain = args.is_present("auto_chain");
+    let fail_fast = args.is_present("fail_fast");
 
     if dash_count([Some(&input), password.as_ref()].into_iter()) > 1 {
         Err("Only one input source can be from STDIN")?
@@ -242,9 +250,30 @@ fn run_launch(args: &ArgMatches) -> Result<()> {
     };
 
     let input = input_reader(input)?;
-    let command = get_command(input, password.as_bytes(), &item_name)?;
-    let mut command = process::Command::from(command);
-    let _ = command.spawn()?;
+    let vault = decrypt(input, password.as_bytes())?;
+
+    let mut iterator = items.iter();
+    let mut item_name = iterator.next().expect("At least one item to run");
+
+    loop {
+        match run_item(&vault, item_name, auto_chain) {
+            Ok(()) => {}
+            Err(e) => if fail_fast {
+                Err(e)?;
+            } else {
+                println!("Error running {}: {}", item_name, e);
+            },
+        }
+
+        item_name = match iterator.next() {
+            None => break,
+            Some(item_name) => item_name
+        };
+
+        if !auto_chain {
+            prompt_enter()?;
+        }
+    }
     Ok(())
 }
 
@@ -278,9 +307,7 @@ fn decrypt<R: Read>(input: R, password: &[u8]) -> Result<Vault> {
     Ok(Vault::decrypt(&buffer, password)?)
 }
 
-fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Command> {
-    let vault = decrypt(input, password)?;
-
+fn get_command(vault: &Vault, item_name: &str) -> Result<Command> {
     let item = vault
         .himitsu
         .iter()
@@ -288,6 +315,21 @@ fn get_command<R: Read>(input: R, password: &[u8], item_name: &str) -> Result<Co
         .ok_or_else(|| format!("{} was not found in the vault", item_name))?;
 
     Ok(item.apply()?)
+}
+
+/// Run the item from an unecrypted vault
+fn run_item(vault: &Vault, item_name: &str, block: bool) -> Result<()> {
+    let command = get_command(vault, item_name)?;
+    let mut command = process::Command::from(command);
+    if block {
+        println!("Running `{}`...", item_name);
+        let output = command.output()?;
+        println!("`{}` exit code: {}", item_name, output.status);
+    } else {
+        let _ = command.spawn()?;
+        println!("`{}` spawned...", item_name);
+    }
+    Ok(())
 }
 
 /// Make a command line parser for options
@@ -438,6 +480,23 @@ where
                 .value_name("path"),
         )
         .arg(
+            Arg::with_name("auto_chain")
+                .help(
+                    "When launching multiple items, instead of prompting for the user to press \
+                     `ENTER` before launching the previous item, automatically launch the next \
+                     item after the previous item has exited.",
+                )
+                .long("auto-chain"),
+        )
+        .arg(
+            Arg::with_name("fail_fast")
+                .help(
+                    "When launching multiple items and any of the items fail to launch \
+                     all subsequent launches will be cancelled.",
+                )
+                .long("fail-fast"),
+        )
+        .arg(
             Arg::with_name("input")
                 .index(1)
                 .help(
@@ -456,7 +515,8 @@ where
                 .takes_value(true)
                 .value_name("item")
                 .empty_values(false)
-                .required(true),
+                .required(true)
+                .multiple(true),
         );
 
     App::new(crate_name!())
@@ -1021,7 +1081,8 @@ mod tests {
     #[test]
     fn launch_creates_the_right_command() {
         let encrypted = to_cursor(encrypted_fixture);
-        let command = get_command(encrypted, PASSWORD.as_bytes(), "cat").expect("to succeed");
+        let vault = decrypt(encrypted, PASSWORD.as_bytes()).expect("to decrypt");
+        let command = get_command(&vault, "cat").expect("to succeed");
         let expected = Command {
             executeable: "cat".to_string(),
             current_directory: Some(From::from("/bin")),
