@@ -1081,7 +1081,8 @@ mod tests {
     #[test]
     fn launch_creates_the_right_command() {
         let encrypted = to_cursor(encrypted_fixture);
-        let command = get_command(encrypted, PASSWORD.as_bytes(), "cat").expect("to succeed");
+        let vault = decrypt(encrypted, PASSWORD.as_bytes()).expect("to decrypt");
+        let command = get_command(&vault, "cat").expect("to succeed");
         let expected = Command {
             executeable: "cat".to_string(),
             current_directory: Some(From::from("/bin")),
