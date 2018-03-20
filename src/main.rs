@@ -99,10 +99,10 @@ fn prompt_enter() -> Result<()> {
 
 /// Wait for any input and throw away the input. Useful for "press enter to continue".
 fn read_stdin() -> Result<()> {
-    let mut stdin = io::stdin();
-    let mut buffer = vec![0; 1];
-    // Read one byte
-    let _ = stdin.read_exact(&mut buffer)?;
+    let stdin = io::stdin();
+    let mut buffer = String::new();
+    // Read one line
+    let _ = stdin.read_line(&mut buffer)?;
     Ok(())
 }
 
@@ -267,7 +267,7 @@ fn run_launch(args: &ArgMatches) -> Result<()> {
 
         item_name = match iterator.next() {
             None => break,
-            Some(item_name) => item_name
+            Some(item_name) => item_name,
         };
 
         if !auto_chain {
@@ -602,7 +602,6 @@ fn deserialize_vault<R: Read>(reader: R, format: Format) -> Result<Vault> {
     };
     Ok(vault)
 }
-
 
 /// Counts the number of "dashes" or `-` in an Iterator of Options<S>
 fn dash_count<'a, S, I>(iterator: I) -> usize

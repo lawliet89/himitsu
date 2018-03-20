@@ -42,7 +42,6 @@ error_chain! {
 pub struct Vault {
     /// The secrets for a particular vault
     pub himitsu: Vec<Himitsu>,
-
     // TODO: Move nonce here? Ask the user not to touch the nonce field
 }
 
