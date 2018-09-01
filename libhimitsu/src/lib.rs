@@ -17,8 +17,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use ring::aead;
-use serde::ser::{Serialize, Serializer};
 use serde::de::{self, Deserialize, Deserializer, Visitor};
+use serde::ser::{Serialize, Serializer};
 use strfmt::strfmt;
 
 /// Length of key, in bytes
@@ -184,14 +184,16 @@ impl<'a> EncryptedVault<'a> {
 impl Himitsu {
     /// Apply the template strings with the secrets
     pub fn apply(&self) -> Result<Command> {
-        let arguments = self.arguments
+        let arguments = self
+            .arguments
             .iter()
             .map(|arg| strfmt(arg, &self.secrets))
             .collect::<::std::result::Result<Vec<String>, strfmt::FmtError>>()?;
 
         Ok(Command {
             executeable: strfmt(&self.executeable, &self.secrets)?,
-            current_directory: self.current_directory
+            current_directory: self
+                .current_directory
                 .apply(&self.executeable, &self.secrets)?,
             arguments,
         })

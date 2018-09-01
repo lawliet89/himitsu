@@ -116,9 +116,11 @@ fn run_subcommand(args: &ArgMatches) -> Result<()> {
 }
 
 fn run_encrypt(args: &ArgMatches) -> Result<()> {
-    let input = args.value_of("input")
+    let input = args
+        .value_of("input")
         .expect("Required argument is provided");
-    let output = args.value_of("output")
+    let output = args
+        .value_of("output")
         .expect("Required argument is provided");
 
     let nonce = args.value_of("nonce");
@@ -184,9 +186,11 @@ fn run_encrypt(args: &ArgMatches) -> Result<()> {
 }
 
 fn run_decrypt(args: &ArgMatches) -> Result<()> {
-    let input = args.value_of("input")
+    let input = args
+        .value_of("input")
         .expect("Required argument is provided");
-    let output = args.value_of("output")
+    let output = args
+        .value_of("output")
         .expect("Required argument is provided");
 
     let password = args.value_of("password");
@@ -225,12 +229,17 @@ fn run_decrypt(args: &ArgMatches) -> Result<()> {
 }
 
 fn run_launch(args: &ArgMatches) -> Result<()> {
-    let input = args.value_of("input")
+    let input = args
+        .value_of("input")
         .expect("Required argument is provided");
-    let items: Vec<&str> = args.values_of("item")
-        .expect("Required argument is provided")
-        .collect();
     let password = args.value_of("password");
+    let items = args.values_of("item");
+    let all_items = args.is_present("all_items");
+
+    if items.is_none() && !all_items {
+        Err("You must specify at least one item to run, or use `--all`.")?
+    }
+
     let auto_chain = args.is_present("auto_chain");
     let fail_fast = args.is_present("fail_fast");
 
@@ -251,6 +260,14 @@ fn run_launch(args: &ArgMatches) -> Result<()> {
 
     let input = input_reader(input)?;
     let vault = decrypt(input, password.as_bytes())?;
+
+    let items: Vec<&str> = if all_items {
+        vault.himitsu.iter().map(|himitsu| himitsu.name.as_str()).collect()
+    } else {
+        items.expect("Existence has been tested").collect()
+    };
+
+    println!("Running {}", items.join(", "));
 
     let mut iterator = items.iter();
     let mut item_name = iterator.next().expect("At least one item to run");
@@ -515,8 +532,13 @@ where
                 .takes_value(true)
                 .value_name("item")
                 .empty_values(false)
-                .required(true)
+                .conflicts_with("all_items")
                 .multiple(true),
+        )
+        .arg(
+            Arg::with_name("all_items")
+                .help("Launch all items")
+                .long("all"),
         );
 
     App::new(crate_name!())
@@ -632,9 +654,9 @@ mod tests {
     use std::ops::Fn;
     use std::path::PathBuf;
 
-    use toml;
     use libhimitsu::{self, EncryptedVault, Vault};
     use tempdir::TempDir;
+    use toml;
 
     static PASSWORD: &str = "password";
 
