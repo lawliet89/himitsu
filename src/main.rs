@@ -34,6 +34,7 @@ error_chain!{
         TomlDeserializationError(toml::de::Error);
         JsonError(serde_json::Error);
         YamlError(serde_yaml::Error);
+        ParseIntError(std::num::ParseIntError);
     }
 }
 
@@ -98,12 +99,41 @@ fn prompt_enter() -> Result<()> {
 }
 
 /// Wait for any input and throw away the input. Useful for "press enter to continue".
-fn read_stdin() -> Result<()> {
+fn read_stdin() -> Result<String> {
     let stdin = io::stdin();
     let mut buffer = String::new();
     // Read one line
     let _ = stdin.read_line(&mut buffer)?;
-    Ok(())
+    Ok(buffer)
+}
+
+/// Collect items to launch from the user
+fn collect_launch_items(vault: &Vault) -> Result<Vec<&str>> {
+    let mut items: Vec<usize> = vec![];
+    let max_length = vault.himitsu.len();
+    loop {
+        println!("Enter the item you would like to run:");
+        println!("\t0 - [Exit and Stop]");
+
+        for (index, item) in vault.himitsu.iter().enumerate() {
+            println!("\t{} - {}", index + 1, item.name);
+        }
+
+        print!("Item to run: ");
+        io::stdout().flush()?;
+        let input: usize = read_stdin()?.trim().parse()?;
+        if input == 0 {
+            break;
+        }
+        if input > max_length {
+            Err("Unknown item specified")?;
+        }
+        items.push(input);
+    }
+    Ok(items
+        .into_iter()
+        .map(|index| vault.himitsu[index - 1].name.as_str())
+        .collect())
 }
 
 fn run_subcommand(args: &ArgMatches) -> Result<()> {
@@ -135,7 +165,8 @@ fn run_encrypt(args: &ArgMatches) -> Result<()> {
             nonce.as_ref(),
             salt.as_ref(),
             password.as_ref(),
-        ].into_iter(),
+        ]
+            .into_iter(),
     ) > 1
     {
         Err("Only one input source can be from STDIN")?
@@ -235,10 +266,7 @@ fn run_launch(args: &ArgMatches) -> Result<()> {
     let password = args.value_of("password");
     let items = args.values_of("item");
     let all_items = args.is_present("all_items");
-
-    if items.is_none() && !all_items {
-        Err("You must specify at least one item to run, or use `--all`.")?
-    }
+    let prompt = args.is_present("prompt") || items.is_none();
 
     let auto_chain = args.is_present("auto_chain");
     let fail_fast = args.is_present("fail_fast");
@@ -262,15 +290,30 @@ fn run_launch(args: &ArgMatches) -> Result<()> {
     let vault = decrypt(input, password.as_bytes())?;
 
     let items: Vec<&str> = if all_items {
-        vault.himitsu.iter().map(|himitsu| himitsu.name.as_str()).collect()
+        vault
+            .himitsu
+            .iter()
+            .map(|himitsu| himitsu.name.as_str())
+            .collect()
+    } else if prompt {
+        collect_launch_items(&vault)?
     } else {
         items.expect("Existence has been tested").collect()
     };
 
-    println!("Running {}", items.join(", "));
+    println!(
+        "Running {}",
+        items
+            .iter()
+            .map(|name| format!("`{}`", name))
+            .collect::<Vec<String>>()
+            .join(", ")
+    );
 
     let mut iterator = items.iter();
-    let mut item_name = iterator.next().expect("At least one item to run");
+    let mut item_name = iterator.next().ok_or_else(|| {
+        "You must specify at least one item to run, use `--prompt`, or use `--all`."
+    })?;
 
     loop {
         match run_item(&vault, item_name, auto_chain) {
@@ -362,35 +405,29 @@ where
                 .help(
                     "Instead of generating a random NONCE for the encryption process, \
                      provide a path to a file containing the nonce. Use - to refer to STDIN",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .empty_values(false)
                 .value_name("path"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("salt")
                 .long("salt")
                 .help(
                     "Instead of generating a random salt for the key derivation process, \
                      provide a path to a file containing the salt. Use - to refer to STDIN",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .empty_values(false)
                 .value_name("path"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("password")
                 .help(
                     "Instead of prompting for a password, use the password from the provided path \
                      instead. Use `-` to refer to STDIN",
-                )
-                .short("p")
+                ).short("p")
                 .long("password")
                 .takes_value(true)
                 .empty_values(false)
                 .value_name("path"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("format")
                 .help("Specify the format the decrypted vault is in.")
                 .possible_values(&Format::possible_values())
@@ -401,27 +438,23 @@ where
                 .empty_values(false)
                 .value_name("format")
                 .global(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("input")
                 .index(1)
                 .help(
                     "Specifies the path to read the decrypted vault from. \
                      Use - to refer to STDIN",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .value_name("input_path")
                 .empty_values(false)
                 .required(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("output")
                 .index(2)
                 .help(
                     "Specifies the path to write the encrypted vault to. \
                      Use - to refer to STDOUT",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .value_name("output_path")
                 .empty_values(false)
                 .required(true),
@@ -434,14 +467,12 @@ where
                 .help(
                     "Instead of prompting for a password, use the password from the provided path \
                      instead. Use `-` to refer to STDIN",
-                )
-                .short("p")
+                ).short("p")
                 .long("password")
                 .takes_value(true)
                 .empty_values(false)
                 .value_name("path"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("format")
                 .help("Specify the format the decrypted vault is in.")
                 .possible_values(&Format::possible_values())
@@ -452,27 +483,23 @@ where
                 .value_name("format")
                 .empty_values(false)
                 .global(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("input")
                 .index(1)
                 .help(
                     "Specifies the path to read the encrypted vault from. \
                      Use - to refer to STDIN",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .value_name("input_path")
                 .empty_values(false)
                 .required(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("output")
                 .index(2)
                 .help(
                     "Specifies the path to write the decrypted vault to. \
                      Use - to refer to STDOUT",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .value_name("output_path")
                 .empty_values(false)
                 .required(true),
@@ -483,49 +510,40 @@ where
             "Launch applications from a vault with the decryption password and item name. \n\n\
              Hint: You can use `decrypt` to view the contents of your vault. Simply use `-`\
              to print the output to STDOUT",
-        )
-        .arg(
+        ).arg(
             Arg::with_name("password")
                 .help(
                     "Instead of prompting for a password, use the password from the provided path \
                      instead. Use `-` to refer to STDIN",
-                )
-                .short("p")
+                ).short("p")
                 .long("password")
                 .takes_value(true)
                 .empty_values(false)
                 .value_name("path"),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("auto_chain")
                 .help(
                     "When launching multiple items, instead of prompting for the user to press \
                      `ENTER` before launching the previous item, automatically launch the next \
                      item after the previous item has exited.",
-                )
-                .long("auto-chain"),
-        )
-        .arg(
+                ).long("auto-chain"),
+        ).arg(
             Arg::with_name("fail_fast")
                 .help(
                     "When launching multiple items and any of the items fail to launch \
                      all subsequent launches will be cancelled.",
-                )
-                .long("fail-fast"),
-        )
-        .arg(
+                ).long("fail-fast"),
+        ).arg(
             Arg::with_name("input")
                 .index(1)
                 .help(
                     "Specifies the path to read the encrypted vault from. \
                      Use - to refer to STDIN",
-                )
-                .takes_value(true)
+                ).takes_value(true)
                 .value_name("input_path")
                 .empty_values(false)
                 .required(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("item")
                 .index(2)
                 .help("Specifies item to launch.")
@@ -534,11 +552,14 @@ where
                 .empty_values(false)
                 .conflicts_with("all_items")
                 .multiple(true),
-        )
-        .arg(
+        ).arg(
             Arg::with_name("all_items")
                 .help("Launch all items")
                 .long("all"),
+        ).arg(
+            Arg::with_name("prompt")
+                .help("Prompt for items to launch, ignoring all items specified in arguments")
+                .long("prompt"),
         );
 
     App::new(crate_name!())
@@ -554,12 +575,10 @@ where
              stored in an encrypted form.\
              Encryption keys are derived from passwords using `argon2i` and encryption is \
              performed with `ChaCha20-Poly1305`.",
-        )
-        .arg(Arg::with_name("fail_silent").long("fail-silent").help(
+        ).arg(Arg::with_name("fail_silent").long("fail-silent").help(
             "Instead of asking for the user to confirm any failure, \
              exit immediately on failure silently.",
-        ))
-        .subcommand(encrypt)
+        )).subcommand(encrypt)
         .subcommand(decrypt)
         .subcommand(launch)
 }
@@ -875,8 +894,7 @@ mod tests {
                 "--format=toml",
                 decrypted_path.to_str().expect("to exist"),
                 encrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("encrypt")
             .expect("to be encrypt subcommand");
@@ -893,8 +911,7 @@ mod tests {
                 "--format=toml",
                 encrypted_path.to_str().expect("to exist"),
                 decrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("decrypt")
             .expect("to be decrypt subcommand");
@@ -938,8 +955,7 @@ mod tests {
                 "--format=json",
                 decrypted_path.to_str().expect("to exist"),
                 encrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("encrypt")
             .expect("to be encrypt subcommand");
@@ -956,8 +972,7 @@ mod tests {
                 "--format=json",
                 encrypted_path.to_str().expect("to exist"),
                 decrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("decrypt")
             .expect("to be decrypt subcommand");
@@ -1001,8 +1016,7 @@ mod tests {
                 "--format=yaml",
                 decrypted_path.to_str().expect("to exist"),
                 encrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("encrypt")
             .expect("to be encrypt subcommand");
@@ -1019,8 +1033,7 @@ mod tests {
                 "--format=yaml",
                 encrypted_path.to_str().expect("to exist"),
                 decrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("decrypt")
             .expect("to be decrypt subcommand");
@@ -1064,8 +1077,7 @@ mod tests {
                 "--format=toml",
                 decrypted_path.to_str().expect("to exist"),
                 encrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("encrypt")
             .expect("to be encrypt subcommand");
@@ -1082,8 +1094,7 @@ mod tests {
                 "--format=toml",
                 encrypted_path.to_str().expect("to exist"),
                 decrypted_path.to_str().expect("to exist"),
-            ])
-            .expect("parsing to succeed");
+            ]).expect("parsing to succeed");
         let subcommand = matches
             .subcommand_matches("decrypt")
             .expect("to be decrypt subcommand");

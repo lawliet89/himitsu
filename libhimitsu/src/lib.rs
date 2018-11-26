@@ -318,7 +318,7 @@ mod tests {
                 ("secret".to_string(), "foo".to_string()),
                 ("secret2".to_string(), "bar".to_string()),
             ].into_iter()
-                .collect(),
+            .collect(),
             executeable: "/bin/{exe}".to_string(),
             current_directory: CurrentDirectory::Specify("/bin".to_string()),
             arguments: vec!["{secret}", "foo{secret2}"]
